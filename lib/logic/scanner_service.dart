@@ -37,18 +37,26 @@ class ScannerService {
   }
 
   /// Scans one page from the given device and saves it to [outputPath].
-  /// Returns true on success.
-  static Future<bool> scanPage(String deviceId, String outputPath) async {
+  /// Returns the result, including a diagnostic [ScanPageResult.error]
+  /// string (native WIA stage + HRESULT) when it fails.
+  static Future<ScanPageResult> scanPage(String deviceId, String outputPath) async {
     try {
-      final ok = await _channel.invokeMethod<bool>('scanPage', {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('scanPage', {
         'deviceId': deviceId,
         'outputPath': outputPath,
       });
-      return ok ?? false;
-    } on PlatformException {
-      return false;
+      if (result == null) return ScanPageResult(false, null);
+      return ScanPageResult(result['success'] as bool? ?? false, result['error'] as String?);
+    } on PlatformException catch (e) {
+      return ScanPageResult(false, e.message);
     } on MissingPluginException {
-      return false;
+      return ScanPageResult(false, null);
     }
   }
+}
+
+class ScanPageResult {
+  final bool success;
+  final String? error;
+  ScanPageResult(this.success, this.error);
 }
