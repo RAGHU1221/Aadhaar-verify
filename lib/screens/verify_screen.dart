@@ -29,6 +29,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
   List<String> _imagePaths = [];
   String? _fileLabel;
   bool _verifying = false;
+  bool _scanning = false;
   VerificationResult? _result;
   String? _statusMessage;
 
@@ -128,7 +129,9 @@ class _VerifyScreenState extends State<VerifyScreen> {
 
     while (true) {
       final outPath = p.join(outDir.path, 'scan_${sessionId}_page$pageNum.png');
+      setState(() => _scanning = true);
       final scanResult = await ScannerService.scanPage(chosen.id, outPath);
+      setState(() => _scanning = false);
       if (!scanResult.success) {
         if (pages.isEmpty) {
           final detail = scanResult.error;
@@ -144,6 +147,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
       final again = await _showScanNextPageDialog();
       if (!again) break;
       pageNum++;
+      setState(() => _statusMessage = i18n.bi('scanning_in_progress'));
     }
 
     if (pages.isEmpty) {
@@ -236,9 +240,12 @@ class _VerifyScreenState extends State<VerifyScreen> {
   Future<VerificationResult> _verifyDocument(List<String> imagePaths, String docType) async {
     QrReadResult? qrResult;
     final textParts = <String>[];
+    String? ocrError;
     for (final path in imagePaths) {
       qrResult ??= await readQrFromImage(path);
-      textParts.add(await ocr.extractText(path, lang: 'eng'));
+      final ocrResult = await ocr.extractText(path, lang: 'eng');
+      textParts.add(ocrResult.text);
+      ocrError ??= ocrResult.error;
     }
     final text = textParts.join('\n');
 
@@ -278,6 +285,13 @@ class _VerifyScreenState extends State<VerifyScreen> {
       if ((docType == 'COMMUNITY_NATIVITY' || docType == 'RATION_CARD') && validatorFn != null) {
         result.fields['field_ocr_excerpt'] =
             text.length > 150 ? text.substring(0, 150).replaceAll('\n', ' ') : text.replaceAll('\n', ' ');
+      }
+
+      // If OCR never actually ran, or ran but found nothing, say so plainly
+      // instead of leaving the excerpt/detected-number blank with no clue
+      // why - this is a setup/scan-quality problem, not silence.
+      if (ocrError != null && text.trim().isEmpty) {
+        result.fields['field_ocr_excerpt'] = ocrError;
       }
 
       if (qrResult != null) {
@@ -425,17 +439,21 @@ class _VerifyScreenState extends State<VerifyScreen> {
               runSpacing: 10,
               children: [
                 OutlinedButton.icon(
-                  onPressed: _uploadDocument,
+                  onPressed: _scanning ? null : _uploadDocument,
                   icon: const Icon(Icons.upload_file),
                   label: Text(i18n.bi('upload_btn')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: _scanDocument,
-                  icon: const Icon(Icons.document_scanner),
+                  onPressed: _scanning ? null : _scanDocument,
+                  icon: _scanning
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.document_scanner),
                   label: Text(i18n.bi('scan_btn')),
                 ),
                 ElevatedButton.icon(
-                  onPressed: (_imagePaths.isNotEmpty && !_verifying) ? _runVerification : null,
+                  onPressed: (_imagePaths.isNotEmpty && !_verifying && !_scanning) ? _runVerification : null,
                   icon: _verifying
                       ? const SizedBox(
                           width: 16, height: 16,
@@ -458,6 +476,16 @@ class _VerifyScreenState extends State<VerifyScreen> {
             if (_statusMessage != null) ...[
               const SizedBox(height: 4),
               Text(_statusMessage!, style: const TextStyle(color: kPrimaryGreen, fontSize: 12)),
+            ],
+            if (_scanning) ...[
+              const SizedBox(height: 8),
+              const ClipRRect(
+                borderRadius: BorderRadius.all(Radius.circular(4)),
+                child: LinearProgressIndicator(
+                  minHeight: 6,
+                  color: kPrimaryGreen,
+                ),
+              ),
             ],
           ],
         ),
