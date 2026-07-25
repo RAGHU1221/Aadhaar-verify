@@ -1,0 +1,50 @@
+name: Build Windows app
+
+# Runs on GitHub's own Windows runner, which has a real Flutter SDK,
+# real pub.dev access, and a real Visual Studio C++ toolchain - none of
+# which were available in the sandbox this project was originally
+# written in. This is the first time the code actually gets compiled.
+#
+# Trigger manually from the Actions tab (useful since you're often on
+# mobile via the GitHub web UI), or automatically on every push.
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      - name: Scaffold + patch windows/ runner project
+        shell: pwsh
+        run: ./scripts/patch_windows_project.ps1
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter analyze (informational - won't fail the build)
+        run: flutter analyze || echo "flutter analyze reported issues - see log above, build continues"
+        continue-on-error: true
+
+      - name: flutter build windows (release)
+        run: flutter build windows --release
+
+      - name: Upload built app as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AadhaarDocVerifier-windows
+          path: build/windows/x64/runner/Release/
+          if-no-files-found: error
