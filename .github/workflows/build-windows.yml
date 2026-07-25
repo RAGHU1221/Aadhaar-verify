@@ -16,6 +16,19 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      # CMake 4.x removed support for very old cmake_minimum_required()
+      # versions. The pdfx plugin's bundled pdfium download step
+      # (flutter/ephemeral/.plugin_symlinks/pdfx/windows/DownloadProject.cmake)
+      # still declares an old minimum, which fails to configure on the
+      # CMake version bundled with the windows-latest runner/current
+      # Visual Studio. This environment variable is CMake's own
+      # documented escape hatch for exactly this transitional problem -
+      # it tells every nested `cmake` invocation (including the one
+      # DownloadProject triggers for pdfium) to treat old
+      # cmake_minimum_required() versions as if they'd requested 3.5,
+      # without needing to patch pdfx's vendored CMake files ourselves.
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
