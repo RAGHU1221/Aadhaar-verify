@@ -2,7 +2,7 @@
 //
 // Implements two MethodChannel calls on 'aadhaar_verifier/scanner':
 //   listScanners() -> List<{id, name}>
-//   scanPage({deviceId, outputPath}) -> bool
+//   scanPage({deviceId, outputPath}) -> {success: bool, error: string}
 //
 // Mirrors the logic already proven working in the Python build's
 // modules/scanner.py (WIA.DeviceManager + Device.Items[0].Transfer()),
@@ -19,6 +19,7 @@
 #include <wia.h>
 #include <comdef.h>
 #include <atlbase.h>
+#include <cstdio>
 #include <string>
 #include <vector>
 #include <memory>
@@ -108,19 +109,31 @@ std::vector<std::pair<std::wstring, std::wstring>> ListScannerDevices() {
 }
 
 // Connects to a device by ID, scans its first item, and saves as PNG.
-bool ScanOnePage(const std::wstring& deviceId, const std::wstring& outputPath) {
+// On failure, fills [errorOut] with the stage and HRESULT so the Dart
+// side can show something more useful than a generic "scan failed".
+bool ScanOnePage(const std::wstring& deviceId, const std::wstring& outputPath,
+                  std::wstring* errorOut) {
+  auto fail = [&](const wchar_t* stage, HRESULT hr) {
+    wchar_t buf[256];
+    swprintf_s(buf, L"%ls failed (hr=0x%08X)", stage, hr);
+    if (errorOut) *errorOut = buf;
+    return false;
+  };
+
   CComPtr<IWiaDevMgr2> devMgr;
   HRESULT hr = devMgr.CoCreateInstance(CLSID_WiaDevMgr2);
-  if (FAILED(hr)) return false;
+  if (FAILED(hr)) return fail(L"CoCreateInstance(WiaDevMgr2)", hr);
 
+  // CreateDevice needs a real BSTR (length-prefixed), not a raw wchar_t*.
+  _bstr_t deviceIdBstr(deviceId.c_str());
   CComPtr<IWiaItem2> rootItem;
-  hr = devMgr->CreateDevice(0, const_cast<BSTR>(deviceId.c_str()), &rootItem);
-  if (FAILED(hr) || !rootItem) return false;
+  hr = devMgr->CreateDevice(0, deviceIdBstr, &rootItem);
+  if (FAILED(hr) || !rootItem) return fail(L"CreateDevice", hr);
 
   // Enumerate to the first scannable child item (flatbed/feeder image item).
   CComPtr<IEnumWiaItem2> enumItem;
   hr = rootItem->EnumChildItems(nullptr, &enumItem);
-  if (FAILED(hr) || !enumItem) return false;
+  if (FAILED(hr) || !enumItem) return fail(L"EnumChildItems", hr);
 
   CComPtr<IWiaItem2> imageItem;
   hr = enumItem->Next(1, &imageItem, nullptr);
@@ -131,13 +144,13 @@ bool ScanOnePage(const std::wstring& deviceId, const std::wstring& outputPath) {
 
   CComPtr<IWiaTransfer> transfer;
   hr = imageItem->QueryInterface(IID_IWiaTransfer, (void**)&transfer);
-  if (FAILED(hr) || !transfer) return false;
+  if (FAILED(hr) || !transfer) return fail(L"QueryInterface(IWiaTransfer)", hr);
 
   // Minimal IWiaTransferCallback that just records success/failure.
   class SimpleCallback : public IWiaTransferCallback {
    public:
     std::wstring targetPath;
-    bool succeeded = false;
+    HRESULT streamError = S_OK;
     LONG refCount = 1;
 
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
@@ -160,8 +173,8 @@ bool ScanOnePage(const std::wstring& deviceId, const std::wstring& outputPath) {
     }
     STDMETHODIMP GetNextStream(LONG flags, BSTR itemName, BSTR fullItemName, IStream** stream) override {
       *stream = nullptr;
-      SHCreateStreamOnFileEx(targetPath.c_str(), STGM_CREATE | STGM_WRITE, FILE_ATTRIBUTE_NORMAL,
-                              TRUE, nullptr, stream);
+      streamError = SHCreateStreamOnFileEx(targetPath.c_str(), STGM_CREATE | STGM_WRITE,
+                                            FILE_ATTRIBUTE_NORMAL, TRUE, nullptr, stream);
       return *stream ? S_OK : E_FAIL;
     }
   };
@@ -176,8 +189,13 @@ bool ScanOnePage(const std::wstring& deviceId, const std::wstring& outputPath) {
   // wasn't verified against a real scanner in this sandbox.
   hr = transfer->Download(0, callback);
   bool ok = SUCCEEDED(hr);
+  HRESULT streamError = callback->streamError;
   callback->Release();
-  return ok;
+  if (!ok) {
+    if (FAILED(streamError)) return fail(L"SHCreateStreamOnFileEx", streamError);
+    return fail(L"Download", hr);
+  }
+  return true;
 }
 
 }  // namespace
@@ -217,8 +235,12 @@ void RegisterScannerChannel(flutter::FlutterEngine* engine) {
           }
           std::wstring deviceId = Utf8ToWide(std::get<std::string>(idIt->second));
           std::wstring outputPath = Utf8ToWide(std::get<std::string>(pathIt->second));
-          bool ok = ScanOnePage(deviceId, outputPath);
-          result->Success(EncodableValue(ok));
+          std::wstring error;
+          bool ok = ScanOnePage(deviceId, outputPath, &error);
+          EncodableMap resultMap;
+          resultMap[EncodableValue("success")] = EncodableValue(ok);
+          resultMap[EncodableValue("error")] = EncodableValue(WideToUtf8(error));
+          result->Success(EncodableValue(resultMap));
 
         } else {
           result->NotImplemented();
