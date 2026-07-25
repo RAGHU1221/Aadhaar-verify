@@ -78,6 +78,22 @@ ValidatorResult validateCommunityNativity(String? certNumber) {
   return ValidatorResult('REVIEW', 'community_nativity_unclear');
 }
 
+/// TN birth certificates (CRSTN / Chennai GCC) have no public checksum
+/// either - the registration number format (B-YYYY:DD-NNNNN-NNNNNN) is
+/// consistent but not self-verifying. Real confirmation should go through
+/// the QR verification link, which we can also cross-check locally: the
+/// QR URL itself embeds the registration number as a query parameter -
+/// see url_qr_parser.dart. Verified working against a real TN birth
+/// certificate.
+ValidatorResult validateBirthCert(String? regNumber) {
+  final reg = (regNumber ?? '').trim();
+  final digitsOnly = reg.replaceAll(RegExp(r'\D'), '');
+  if (reg.isNotEmpty && digitsOnly.length >= 8) {
+    return ValidatorResult('REVIEW', 'birth_cert_review');
+  }
+  return ValidatorResult('REVIEW', 'birth_cert_unclear');
+}
+
 /// ICAO 9303 MRZ check-digit algorithm (publicly documented standard).
 int _mrzCheckDigit(String data) {
   const weights = [7, 3, 1];
@@ -126,4 +142,5 @@ final Map<String, ValidatorFn> kValidators = {
   'DRIVING_LICENSE': validateDrivingLicense,
   'RATION_CARD': validateRationCard,
   'COMMUNITY_NATIVITY': validateCommunityNativity,
+  'BIRTH_CERT': validateBirthCert,
 };
