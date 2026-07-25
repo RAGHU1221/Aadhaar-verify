@@ -50,22 +50,48 @@ Future<String> preprocessForOcr(String imagePath) async {
   }
 }
 
+class OcrResult {
+  final String text;
+  /// Set only when OCR could not run/produce text at all, so the caller
+  /// can tell "tesseract isn't installed" apart from "ran fine, image had
+  /// no readable text" (the latter leaves this null with an empty [text]).
+  final String? error;
+  OcrResult(this.text, this.error);
+}
+
 /// Runs Tesseract on the (optionally preprocessed) image and returns the
 /// extracted text. `lang` is 'eng' or 'eng+tam' if the Tamil traineddata
 /// is installed.
-Future<String> extractText(String imagePath, {String lang = 'eng'}) async {
+Future<OcrResult> extractText(String imagePath, {String lang = 'eng'}) async {
   final processedPath = await preprocessForOcr(imagePath);
   try {
-    final result = await Process.run('tesseract', [processedPath, 'stdout', '-l', lang]);
-    if (result.exitCode == 0) {
-      return result.stdout as String;
+    var result = await Process.run('tesseract', [processedPath, 'stdout', '-l', lang]);
+    if (result.exitCode != 0) {
+      // Tamil traineddata probably not installed - fall back to English only.
+      result = await Process.run('tesseract', [processedPath, 'stdout', '-l', 'eng']);
+      if (result.exitCode != 0) {
+        return OcrResult('', 'Tesseract-OCR ran but failed (exit ${result.exitCode}): ${result.stderr}');
+      }
     }
-    // Tamil traineddata probably not installed - fall back to English only.
-    final fallback = await Process.run('tesseract', [processedPath, 'stdout', '-l', 'eng']);
-    return fallback.exitCode == 0 ? fallback.stdout as String : '';
-  } catch (e) {
+    final text = result.stdout as String;
+    if (text.trim().isEmpty) {
+      // Exit code 0 with no text usually means Tesseract couldn't find any
+      // text region on the page at all (too low contrast, all-graphic
+      // page, wrong page segmentation mode for this layout, etc.) -
+      // distinct from "not installed", so callers can tell them apart.
+      final stderrText = (result.stderr as String).trim();
+      return OcrResult(
+          '',
+          'Tesseract-OCR ran but found no readable text on this page.'
+          '${stderrText.isNotEmpty ? ' ($stderrText)' : ''}');
+    }
+    return OcrResult(text, null);
+  } on ProcessException {
     // tesseract not on PATH / not installed
-    return '';
+    return OcrResult(
+        '', 'Tesseract-OCR is not installed or not on PATH. Install it and add it to PATH (see README), then restart the app.');
+  } catch (e) {
+    return OcrResult('', 'OCR failed: $e');
   }
 }
 
