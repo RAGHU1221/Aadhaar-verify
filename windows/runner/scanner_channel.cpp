@@ -68,6 +68,80 @@ std::wstring ReadDeviceProperty(IWiaPropertyStorage* storage, PROPID propId) {
   return result;
 }
 
+// Reads a VT_I4 property (e.g. resolution/extent properties).
+bool ReadLongProperty(IWiaPropertyStorage* storage, PROPID propId, long* outVal) {
+  PROPSPEC spec = {};
+  spec.ulKind = PRSPEC_PROPID;
+  spec.propid = propId;
+  PROPVARIANT var;
+  PropVariantInit(&var);
+  bool ok = false;
+  if (SUCCEEDED(storage->ReadMultiple(1, &spec, &var)) && var.vt == VT_I4) {
+    *outVal = var.lVal;
+    ok = true;
+  }
+  PropVariantClear(&var);
+  return ok;
+}
+
+// Cap the scan resolution: budget AIO printer/scanners (e.g. Canon
+// imageCLASS MF3010-class devices) commonly default WIA_IPS_XRES/YRES to
+// 600 DPI or higher. That's overkill for OCR/QR reading and, combined
+// with scanning the full bed (see below), makes every scan take much
+// longer than necessary. 200 DPI is still plenty for text/QR and is a
+// commonly supported step on these drivers.
+const long kTargetScanDpi = 200;
+
+void CapScanResolution(IWiaPropertyStorage* propStorage) {
+  PROPSPEC specs[2] = {};
+  PROPVARIANT vars[2] = {};
+  specs[0].ulKind = PRSPEC_PROPID; specs[0].propid = WIA_IPS_XRES;
+  specs[1].ulKind = PRSPEC_PROPID; specs[1].propid = WIA_IPS_YRES;
+  PropVariantInit(&vars[0]); vars[0].vt = VT_I4; vars[0].lVal = kTargetScanDpi;
+  PropVariantInit(&vars[1]); vars[1].vt = VT_I4; vars[1].lVal = kTargetScanDpi;
+  propStorage->WriteMultiple(2, specs, vars, 0);
+}
+
+// WIA items default WIA_IPS_XEXTENT/YEXTENT to whatever area was last
+// scanned (often a small preview-sized region, not the full page), so
+// without this, Download() only captures that partial rectangle. Set the
+// position to (0,0) and the extent to the device's max supported size at
+// its current resolution, so the full page/bed is captured.
+void SetFullPageScanArea(IWiaItem2* item) {
+  CComPtr<IWiaPropertyStorage> propStorage;
+  if (FAILED(item->QueryInterface(IID_IWiaPropertyStorage, (void**)&propStorage)) || !propStorage) {
+    return;
+  }
+
+  CapScanResolution(propStorage);
+
+  long xRes = 0, yRes = 0, maxWidth = 0, maxHeight = 0;
+  // Re-read after writing - some drivers clamp to the nearest supported
+  // value rather than accepting kTargetScanDpi exactly.
+  if (!ReadLongProperty(propStorage, WIA_IPS_XRES, &xRes) || xRes <= 0) xRes = kTargetScanDpi;
+  if (!ReadLongProperty(propStorage, WIA_IPS_YRES, &yRes) || yRes <= 0) yRes = kTargetScanDpi;
+  if (!ReadLongProperty(propStorage, WIA_IPS_MAX_HORIZONTAL_SIZE, &maxWidth)) return;
+  if (!ReadLongProperty(propStorage, WIA_IPS_MAX_VERTICAL_SIZE, &maxHeight)) return;
+
+  // WIA_IPS_MAX_HORIZONTAL_SIZE/VERTICAL_SIZE are in thousandths of an inch.
+  long xExtent = static_cast<long>(static_cast<double>(maxWidth) * xRes / 1000.0);
+  long yExtent = static_cast<long>(static_cast<double>(maxHeight) * yRes / 1000.0);
+  if (xExtent <= 0 || yExtent <= 0) return;
+
+  PROPSPEC specs[4] = {};
+  PROPVARIANT vars[4] = {};
+  const PROPID propIds[4] = {WIA_IPS_XPOS, WIA_IPS_YPOS, WIA_IPS_XEXTENT, WIA_IPS_YEXTENT};
+  const long values[4] = {0, 0, xExtent, yExtent};
+  for (int i = 0; i < 4; i++) {
+    specs[i].ulKind = PRSPEC_PROPID;
+    specs[i].propid = propIds[i];
+    PropVariantInit(&vars[i]);
+    vars[i].vt = VT_I4;
+    vars[i].lVal = values[i];
+  }
+  propStorage->WriteMultiple(4, specs, vars, 0);
+}
+
 // Lists connected WIA devices, excluding cameras where the device type
 // property clearly says so (StiDeviceType: 1 = scanner, 2 = camera).
 std::vector<std::pair<std::wstring, std::wstring>> ListScannerDevices() {
@@ -141,6 +215,11 @@ bool ScanOnePage(const std::wstring& deviceId, const std::wstring& outputPath,
     // Some drivers expose the root itself as the transferable item.
     imageItem = rootItem;
   }
+
+  // Without this, some drivers leave XEXTENT/YEXTENT at a small leftover
+  // preview-sized region, so the scan only comes back covering part of
+  // the page instead of the whole thing.
+  SetFullPageScanArea(imageItem);
 
   CComPtr<IWiaTransfer> transfer;
   hr = imageItem->QueryInterface(IID_IWiaTransfer, (void**)&transfer);
