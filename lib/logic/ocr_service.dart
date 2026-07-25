@@ -29,6 +29,7 @@ const Map<String, String> kFieldRegex = {
   'PASSPORT': r'\b([A-PR-WYa-pr-wy][0-9]{7})\b',
   'AADHAAR_NUM': r'\b(\d{4}\s?\d{4}\s?\d{4})\b',
   'COMMUNITY_NATIVITY': r'\b([A-Z]{1,3}-?\d{8,20})\b',
+  'BIRTH_CERT': r'\b([A-Z]-\d{4}:\d+-\d+-\d+)\b',
 };
 
 /// Grayscales the image (cheap preprocessing that helps Tesseract on
