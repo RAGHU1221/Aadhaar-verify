@@ -128,9 +128,16 @@ class _VerifyScreenState extends State<VerifyScreen> {
 
     while (true) {
       final outPath = p.join(outDir.path, 'scan_${sessionId}_page$pageNum.png');
-      final ok = await ScannerService.scanPage(chosen.id, outPath);
-      if (!ok) {
-        if (pages.isEmpty) _showError(i18n.bi('scan_failed'));
+      final scanResult = await ScannerService.scanPage(chosen.id, outPath);
+      if (!scanResult.success) {
+        if (pages.isEmpty) {
+          final detail = scanResult.error;
+          _showError(
+            detail == null || detail.isEmpty
+                ? i18n.bi('scan_failed')
+                : '${i18n.bi('scan_failed')}\n$detail',
+          );
+        }
         break;
       }
       pages.add(outPath);
