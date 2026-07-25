@@ -1,0 +1,41 @@
+name: Build Windows EXE
+
+# Run this manually from the "Actions" tab in GitHub (Run workflow button),
+# and also automatically whenever app.py, db.py, or qr_utils.py change.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "app.py"
+      - "db.py"
+      - "qr_utils.py"
+      - "requirements.txt"
+      - "fonts/**"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build EXE
+        run: |
+          pyinstaller --onefile --windowed --name "TextileBilling" --add-data "fonts;fonts" app.py
+
+      - name: Upload EXE as a downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextileBilling-exe
+          path: dist/TextileBilling.exe
