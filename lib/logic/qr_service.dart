@@ -6,16 +6,18 @@
 // generally solid, so we don't replicate the multi-pass
 // threshold/upscale fallback the Python version needed for pyzbar.
 //
-// CAVEAT: this file was written without access to pub.dev, so the exact
-// method/class names below (zx.readBarcodeImagePath, DecodeParams,
-// Format.qrCode, result.isValid/.text) are based on the flutter_zxing
-// API as documented, but may drift slightly between package versions.
-// If `flutter pub get` + `flutter analyze` flags a signature mismatch
-// here, check the installed version's example app (in
-// `.pub-cache\hosted\pub.dev\flutter_zxing-<version>\example\`) for the
-// current method names and adjust this file accordingly - the rest of
-// the app only depends on `readQrFromImage()` returning a `QrReadResult?`,
-// so a fix here is fully contained to this one file.
+// UPDATE: the first version of this file guessed the flutter_zxing API
+// without pub.dev access and got it wrong in two ways, caught by the
+// real Windows compiler on GitHub Actions:
+//   1. readBarcodeImagePath needs a second positional DecodeParams arg.
+//   2. There is no `readBarcodesImage` method on `Zxing` at all - the
+//      byte-based fallback call was removed rather than re-guessed
+//      again, to keep this to a single, more likely to be correct, call.
+// If `readBarcodeImagePath` still doesn't match, check
+// `.pub-cache\hosted\pub.dev\flutter_zxing-<version>\lib\` on the build
+// machine (the CI workflow now also prints every `readBarcode`-related
+// method signature it finds there before building, so the Actions log
+// itself will show the real API if this guess is still off).
 
 import 'dart:io';
 import 'package:flutter_zxing/flutter_zxing.dart';
@@ -29,18 +31,12 @@ class QrReadResult {
 /// Returns null if no QR was found.
 Future<QrReadResult?> readQrFromImage(String imagePath) async {
   try {
-    final bytes = await File(imagePath).readAsBytes();
-    final result = await zx.readBarcodeImagePath(File(imagePath));
+    final result = await zx.readBarcodeImagePath(
+      File(imagePath),
+      const DecodeParams(),
+    );
     if (result.isValid && result.text != null && result.text!.isNotEmpty) {
       return QrReadResult(result.text!);
-    }
-    // fall back to raw-bytes decode API in case the path-based one misses
-    final result2 = zx.readBarcodesImage(
-      bytes,
-      DecodeParams(format: Format.qrCode, tryHarder: true, tryInverted: true),
-    );
-    if (result2.isNotEmpty && result2.first.isValid) {
-      return QrReadResult(result2.first.text ?? '');
     }
     return null;
   } catch (_) {
