@@ -99,7 +99,17 @@ windows` for faster iteration once the CI build is green — see below.
    `C:\Program Files\Tesseract-OCR` to your PATH environment variable.
    Verify with `tesseract --version` in a new Command Prompt.
 
-4. **Fetch packages and run**:
+4. **Set a CMake compatibility flag** (needed for the `pdfx` plugin's
+   pdfium download step - newer CMake removed support for the old
+   minimum version it declares; this is CMake's own documented fix,
+   already applied automatically in the GitHub Actions workflow):
+   ```
+   $env:CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+   ```
+   Run this in the same PowerShell window before the commands below (it
+   only lasts for that window - re-run it if you open a new terminal).
+
+5. **Fetch packages and run**:
    ```
    flutter pub get
    flutter run -d windows
@@ -109,7 +119,7 @@ windows` for faster iteration once the CI build is green — see below.
    the latest available, or `flutter_zxing`'s API needs a small
    adjustment - see the caveat comment in `qr_service.dart`).
 
-5. **Build the release .exe**:
+6. **Build the release .exe**:
    ```
    flutter build windows
    ```
