@@ -55,9 +55,26 @@ jobs:
       - name: flutter build windows (release)
         run: flutter build windows --release
 
-      - name: Upload built app as an artifact
+      - name: Upload built app as an artifact (portable/zip)
         uses: actions/upload-artifact@v4
         with:
           name: AadhaarDocVerifier-windows
           path: build/windows/x64/runner/Release/
+          if-no-files-found: error
+
+      - name: Build installer (Inno Setup)
+        # ISCC.exe ships preinstalled on GitHub's windows-latest runners
+        # (see actions/runner-images software list) - no separate install
+        # step needed.
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at the expected path - Inno Setup may have moved/changed on this runner image" }
+          & $iscc "windows\installer\aadhaar_verifier.iss"
+
+      - name: Upload installer as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AadhaarDocVerifier-Setup
+          path: build/installer/AadhaarVerifier-Setup.exe
           if-no-files-found: error
