@@ -12,6 +12,7 @@ import '../logic/qr_service.dart';
 import '../logic/ocr_service.dart' as ocr;
 import '../logic/aadhaar_qr_parser.dart';
 import '../logic/text_qr_parser.dart' as tqr;
+import '../logic/url_qr_parser.dart' as uqp;
 import '../logic/validators.dart';
 import '../logic/matcher.dart' as matcher;
 import '../logic/scanner_service.dart';
@@ -282,7 +283,8 @@ class _VerifyScreenState extends State<VerifyScreen> {
             text.length > 120 ? text.substring(0, 120).replaceAll('\n', ' ') : text.replaceAll('\n', ' ');
       }
 
-      if ((docType == 'COMMUNITY_NATIVITY' || docType == 'RATION_CARD') && validatorFn != null) {
+      if ((docType == 'COMMUNITY_NATIVITY' || docType == 'RATION_CARD' || docType == 'BIRTH_CERT') &&
+          validatorFn != null) {
         result.fields['field_ocr_excerpt'] =
             text.length > 150 ? text.substring(0, 150).replaceAll('\n', ' ') : text.replaceAll('\n', ' ');
       }
@@ -299,6 +301,27 @@ class _VerifyScreenState extends State<VerifyScreen> {
         final qrData = qrResult.data;
         if (qrData.startsWith('http://') || qrData.startsWith('https://')) {
           result.fields['field_verify_url'] = qrData;
+          // Some verify-link QRs (e.g. TN CRSTN birth certificates) embed
+          // the reference number in the URL's own query string, so we can
+          // cross-check it against the OCR-detected number offline -
+          // verified working against a real birth certificate.
+          final urlFields = uqp.parseVerifyUrl(qrData);
+          if (urlFields.isNotEmpty) {
+            urlFields.forEach((k, v) => result.fields.putIfAbsent(k, () => v));
+            final urlRefNo = uqp.extractReferenceNumber(urlFields);
+            if (urlRefNo != null && idNumber.isNotEmpty) {
+              String norm(String s) => s.toUpperCase().replaceAll(' ', '').replaceAll('-', '').replaceAll(':', '');
+              if (norm(urlRefNo) == norm(idNumber)) {
+                result.overallStatus = 'VALID_PATTERN';
+                result.noteKey = 'url_verify_match';
+                result.noteParams = {'qr_no': urlRefNo};
+              } else {
+                result.overallStatus = 'SUSPECT';
+                result.noteKey = 'url_verify_mismatch';
+                result.noteParams = {'qr_no': urlRefNo, 'printed_no': idNumber};
+              }
+            }
+          }
         } else if (tqr.looksLikeKeyValueText(qrData)) {
           final qrFields = tqr.parseKeyValueQr(qrData);
           if (qrFields.isNotEmpty) {
